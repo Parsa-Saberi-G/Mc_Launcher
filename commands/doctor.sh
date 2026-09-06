@@ -1,28 +1,28 @@
 #!/bin/bash
-# MC Launcher shared UI
-MC_COMMAND_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$MC_COMMAND_DIR/ui.sh"
 
-
-set -o pipefail
+# ============================================================
+# MC LAUNCHER — DOCTOR
+# Comprehensive non-interactive diagnostics
+# ============================================================
 
 MC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+COMMAND_DIR="$MC_DIR/commands"
+DATA_DIR="$MC_DIR/data"
+VERSION_DB="$DATA_DIR/versions.json"
+MC_GAME_DIR="${MC_GAME_DIR:-$HOME/.minecraft}"
 
-GAME_DIR="${MC_GAME_DIR:-$HOME/.minecraft}"
-CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/mc"
-CONFIG_FILE="$CONFIG_DIR/config"
-ACCOUNTS_FILE="$CONFIG_DIR/accounts/accounts.json"
-VERSIONS_DB="$MC_DIR/data/versions.json"
-
-PASS=0
-WARN=0
-FAIL=0
+# ============================================================
+# Colors
+# ============================================================
 
 if [[ -t 1 ]]; then
     RED='\033[31m'
     GREEN='\033[32m'
     YELLOW='\033[33m'
+    BLUE='\033[34m'
     CYAN='\033[36m'
+    MAGENTA='\033[35m'
+    WHITE='\033[37m'
     BOLD='\033[1m'
     DIM='\033[2m'
     RESET='\033[0m'
@@ -30,345 +30,746 @@ else
     RED=''
     GREEN=''
     YELLOW=''
+    BLUE=''
     CYAN=''
+    MAGENTA=''
+    WHITE=''
     BOLD=''
     DIM=''
     RESET=''
 fi
 
+# ============================================================
+# Counters
+# ============================================================
+
+CHECKS=0
+PASSED=0
+WARNINGS=0
+ERRORS=0
+
+# ============================================================
+# Helpers
+# ============================================================
 
 pass() {
-    ((PASS++))
-    echo -e "  ${GREEN}✓${RESET} $*"
+    ((CHECKS++))
+    ((PASSED++))
+    printf "  %b✓%b %s\n" "$GREEN" "$RESET" "$*"
 }
 
-
-warning() {
-    ((WARN++))
-    echo -e "  ${YELLOW}!${RESET} $*"
+warn() {
+    ((CHECKS++))
+    ((WARNINGS++))
+    printf "  %b!%b %s\n" "$YELLOW" "$RESET" "$*"
 }
-
 
 fail() {
-    ((FAIL++))
-    echo -e "  ${RED}✗${RESET} $*"
+    ((CHECKS++))
+    ((ERRORS++))
+    printf "  %b✗%b %s\n" "$RED" "$RESET" "$*"
 }
-
 
 section() {
     echo
-    echo -e "${BOLD}${CYAN}$1${RESET}"
-    echo "────────────────────────────────────────────────────────"
+    printf "%b%s%b\n" "$BOLD$CYAN" "$*" "$RESET"
+    printf "%b%s%b\n" "$DIM" "────────────────────────────────────────────────────────────" "$RESET"
 }
 
+detail() {
+    printf "    %b→%b %s\n" "$DIM" "$RESET" "$*"
+}
 
-check_command() {
-    local command="$1"
-    local description="$2"
+# ============================================================
+# Header
+# ============================================================
 
-    if command -v "$command" >/dev/null 2>&1; then
-        pass "$description: $(command -v "$command")"
+echo
+printf "%bMC Launcher Doctor%b\n" "$BOLD$CYAN" "$RESET"
+printf "%bComprehensive non-interactive diagnostics%b\n" "$DIM" "$RESET"
+echo
+printf "Project: %b%s%b\n" "$CYAN" "$MC_DIR" "$RESET"
+printf "Game:    %b%s%b\n" "$CYAN" "$MC_GAME_DIR" "$RESET"
+
+# ============================================================
+# 1. Project structure
+# ============================================================
+
+section "1. Project structure"
+
+[[ -d "$MC_DIR" ]] \
+    && pass "Project directory exists" \
+    || fail "Project directory missing"
+
+[[ -d "$COMMAND_DIR" ]] \
+    && pass "commands/ directory exists" \
+    || fail "commands/ directory missing"
+
+[[ -d "$DATA_DIR" ]] \
+    && pass "data/ directory exists" \
+    || fail "data/ directory missing"
+
+[[ -f "$MC_DIR/mc" ]] \
+    && pass "Main launcher exists" \
+    || fail "Main launcher missing"
+
+# ============================================================
+# 2. Command files
+# ============================================================
+
+section "2. Command files"
+
+COMMANDS=(
+    help
+    install
+    remove
+    run
+    list
+    find
+    search
+    info
+    import
+    export
+    config
+    account
+    update
+    doctor
+)
+
+for cmd in "${COMMANDS[@]}"; do
+    if [[ -f "$COMMAND_DIR/$cmd.sh" ]]; then
+        pass "$cmd.sh exists"
     else
-        fail "$description: not installed"
+        fail "$cmd.sh is missing"
     fi
-}
+done
 
+# ============================================================
+# 3. Permissions
+# ============================================================
 
-check_java() {
-    section "Java"
+section "3. Executable permissions"
 
-    if ! command -v java >/dev/null 2>&1; then
-        fail "Java is not installed."
-        return
-    fi
+if [[ -x "$MC_DIR/mc" ]]; then
+    pass "mc is executable"
+else
+    fail "mc is not executable"
+    detail "chmod +x \"$MC_DIR/mc\""
+fi
 
-    pass "Java executable found."
+for cmd in "${COMMANDS[@]}"; do
+    file="$COMMAND_DIR/$cmd.sh"
 
-    local version
-    version="$(java -version 2>&1 | head -n1)"
+    [[ -f "$file" ]] || continue
 
-    echo "     $version"
-
-    if java -version 2>&1 | grep -qE '"([0-9]+)'; then
-        pass "Java can be executed."
+    if [[ -x "$file" ]]; then
+        pass "$cmd.sh is executable"
     else
-        warning "Could not determine Java version."
+        fail "$cmd.sh is not executable"
+        detail "chmod +x \"$file\""
     fi
-}
+done
 
+# ============================================================
+# 4. Syntax
+# ============================================================
 
-check_game_directory() {
-    section "Minecraft directory"
+section "4. Bash syntax"
 
-    if [[ -d "$GAME_DIR" ]]; then
-        pass "Game directory exists: $GAME_DIR"
+if bash -n "$MC_DIR/mc" 2>/dev/null; then
+    pass "mc syntax OK"
+else
+    fail "mc contains a Bash syntax error"
+    bash -n "$MC_DIR/mc"
+fi
+
+for cmd in "${COMMANDS[@]}"; do
+    file="$COMMAND_DIR/$cmd.sh"
+
+    [[ -f "$file" ]] || continue
+
+    if bash -n "$file" 2>/dev/null; then
+        pass "$cmd.sh syntax OK"
     else
-        warning "Game directory does not exist: $GAME_DIR"
-        echo "     It will be created when needed."
+        fail "$cmd.sh contains a Bash syntax error"
+        bash -n "$file"
+    fi
+done
+
+# ============================================================
+# 5. Router
+# ============================================================
+
+section "5. Router command mappings"
+
+ROUTER_COMMANDS=(
+    install
+    remove
+    run
+    list
+    find
+    search
+    info
+    import
+    export
+    config
+    account
+    update
+    doctor
+    help
+)
+
+for cmd in "${ROUTER_COMMANDS[@]}"; do
+    if grep -Eq "$cmd\|-|$cmd\)" "$MC_DIR/mc" 2>/dev/null; then
+        pass "Router mapping: $cmd"
+    elif grep -Eq "$cmd" "$MC_DIR/mc" 2>/dev/null; then
+        pass "Router contains: $cmd"
+    else
+        fail "Router mapping missing: $cmd"
+    fi
+done
+
+# ============================================================
+# 6. UI dependency scan
+# ============================================================
+
+section "6. UI dependency scan"
+
+UI_FOUND=0
+
+for file in "$COMMAND_DIR"/*.sh; do
+    [[ -f "$file" ]] || continue
+
+    # Do not scan doctor itself because doctor contains the
+    # strings it uses to detect old UI references.
+    [[ "$file" == "$COMMAND_DIR/doctor.sh" ]] && continue
+
+    if grep -nE \
+        'source[[:space:]]+.*ui\.sh|mc_error|mc_ok|mc_warn|mc_info|mc_done|mc_section' \
+        "$file" >/dev/null 2>&1; then
+
+        UI_FOUND=1
+
+        warn "Old UI references found in $(basename "$file")"
+
+        grep -nE \
+            'source[[:space:]]+.*ui\.sh|mc_error|mc_ok|mc_warn|mc_info|mc_done|mc_section' \
+            "$file" |
+            head -10 |
+            while IFS= read -r line; do
+                detail "$line"
+            done
+    fi
+done
+
+if (( UI_FOUND == 0 )); then
+    pass "No old UI dependencies detected"
+fi
+
+# ============================================================
+# 7. Recursive helper detection
+# ============================================================
+
+section "7. Recursive function detection"
+
+RECURSIVE_FOUND=0
+
+for file in "$COMMAND_DIR"/*.sh; do
+    [[ -f "$file" ]] || continue
+    [[ "$file" == "$COMMAND_DIR/doctor.sh" ]] && continue
+
+    while IFS= read -r fn; do
+
+        body="$(
+            awk -v fn="$fn" '
+                $0 ~ "^" fn "[[:space:]]*\\(" {inside=1}
+                inside {print}
+                inside && /^}/ {exit}
+            ' "$file"
+        )"
+
+        if echo "$body" |
+            grep -Eq "^[[:space:]]*${fn}[[:space:]]+['\"]?\\$\\*" 2>/dev/null; then
+
+            RECURSIVE_FOUND=1
+            fail "Possible recursive $fn() in $(basename "$file")"
+        fi
+
+    done < <(
+        grep -Eo '^[a-zA-Z_][a-zA-Z0-9_]*[[:space:]]*\(\)' "$file" |
+        sed 's/[[:space:]]*().*//'
+    )
+done
+
+if (( RECURSIVE_FOUND == 0 )); then
+    pass "No obvious recursive helper functions detected"
+fi
+
+# ============================================================
+# 8. Suspicious files
+# ============================================================
+
+section "8. Suspicious project files"
+
+SUSPICIOUS=0
+
+for file in \
+    "$COMMAND_DIR"/*.bak \
+    "$COMMAND_DIR"/*.broken \
+    "$COMMAND_DIR"/*.old \
+    "$COMMAND_DIR"/*.orig \
+    "$COMMAND_DIR"/*~; do
+
+    [[ -e "$file" ]] || continue
+
+    SUSPICIOUS=1
+    warn "Suspicious file: $(basename "$file")"
+done
+
+if (( SUSPICIOUS == 0 )); then
+    pass "No suspicious backup/broken command files"
+fi
+
+# ============================================================
+# 9. Database
+# ============================================================
+
+section "9. Minecraft database"
+
+if [[ -f "$VERSION_DB" ]]; then
+    pass "versions.json exists"
+else
+    fail "versions.json is missing"
+fi
+
+if [[ -f "$VERSION_DB" ]]; then
+
+    if python3 - "$VERSION_DB" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        data = json.load(f)
+
+    assert isinstance(data, dict)
+    assert isinstance(data.get("latest"), dict)
+    assert isinstance(data.get("versions"), list)
+
+except Exception:
+    sys.exit(1)
+PY
+    then
+        pass "versions.json is valid"
+    else
+        fail "versions.json is invalid"
     fi
 
-    if [[ -w "$GAME_DIR" ]]; then
-        pass "Game directory is writable."
-    elif [[ -d "$GAME_DIR" ]]; then
-        fail "Game directory is not writable."
+    VERSION_COUNT="$(
+        python3 - "$VERSION_DB" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        print(len(json.load(f).get("versions", [])))
+except Exception:
+    print(0)
+PY
+    )"
+
+    if (( VERSION_COUNT > 0 )); then
+        pass "Database contains $VERSION_COUNT versions"
+    else
+        fail "Database contains no versions"
     fi
-}
 
+    LATEST_RELEASE="$(
+        python3 - "$VERSION_DB" <<'PY'
+import json
+import sys
 
-check_directories() {
-    section "Minecraft directories"
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        print(json.load(f)["latest"]["release"])
+except Exception:
+    print("unknown")
+PY
+    )"
 
-    local dirs=(
-        "$GAME_DIR/versions"
-        "$GAME_DIR/mods"
-        "$GAME_DIR/shaderpacks"
-        "$GAME_DIR/resourcepacks"
-        "$GAME_DIR/modpacks"
-        "$GAME_DIR/saves"
-        "$GAME_DIR/instances"
+    LATEST_SNAPSHOT="$(
+        python3 - "$VERSION_DB" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        print(json.load(f)["latest"]["snapshot"])
+except Exception:
+    print("unknown")
+PY
+    )"
+
+    detail "Latest release: $LATEST_RELEASE"
+    detail "Latest snapshot: $LATEST_SNAPSHOT"
+fi
+
+# ============================================================
+# 10. Required programs
+# ============================================================
+
+section "10. Required programs"
+
+REQUIRED_PROGRAMS=(
+    bash
+    curl
+    python3
+    grep
+    sed
+    awk
+    find
+    sort
+    head
+    tail
+    date
+    timeout
+)
+
+for program in "${REQUIRED_PROGRAMS[@]}"; do
+    if command -v "$program" >/dev/null 2>&1; then
+        pass "$program available"
+    else
+        fail "$program is missing"
+    fi
+done
+
+# ============================================================
+# 11. Optional programs
+# ============================================================
+
+section "11. Optional programs"
+
+OPTIONAL_PROGRAMS=(
+    jq
+    unzip
+    tar
+    git
+    java
+)
+
+for program in "${OPTIONAL_PROGRAMS[@]}"; do
+    if command -v "$program" >/dev/null 2>&1; then
+        pass "$program available"
+    else
+        warn "$program is not installed"
+    fi
+done
+
+# ============================================================
+# 12. Java
+# ============================================================
+
+section "12. Java runtime"
+
+if command -v java >/dev/null 2>&1; then
+
+    pass "Java is installed"
+
+    JAVA_VERSION="$(java -version 2>&1 | head -1)"
+    detail "$JAVA_VERSION"
+
+    JAVA_MAJOR="$(
+        java -version 2>&1 |
+        awk -F '"' '/version/ {
+            split($2,v,".")
+            if (v[1] == "1")
+                print v[2]
+            else
+                print v[1]
+        }'
+    )"
+
+    if [[ "$JAVA_MAJOR" =~ ^[0-9]+$ ]]; then
+        if (( JAVA_MAJOR >= 17 )); then
+            pass "Java major version $JAVA_MAJOR is supported"
+        else
+            warn "Java major version $JAVA_MAJOR may be too old"
+        fi
+    else
+        warn "Could not determine Java major version"
+    fi
+
+else
+    fail "Java is not installed"
+fi
+
+# ============================================================
+# 13. Minecraft directory
+# ============================================================
+
+section "13. Minecraft game directory"
+
+if [[ -d "$MC_GAME_DIR" ]]; then
+    pass "Minecraft directory exists"
+else
+    warn "Minecraft directory does not exist"
+fi
+
+for dir in versions mods shaderpacks resourcepacks saves; do
+
+    if [[ -d "$MC_GAME_DIR/$dir" ]]; then
+        pass "~/.minecraft/$dir exists"
+    else
+        # These are optional directories and are NOT errors.
+        case "$dir" in
+            versions)
+                fail "~/.minecraft/versions does not exist"
+                ;;
+            *)
+                warn "~/.minecraft/$dir does not exist"
+                ;;
+        esac
+    fi
+
+done
+
+# ============================================================
+# 14. Installed versions
+# ============================================================
+
+section "14. Installed Minecraft versions"
+
+INSTALLED_COUNT=0
+
+if [[ -d "$MC_GAME_DIR/versions" ]]; then
+
+    while IFS= read -r -d '' dir; do
+
+        version="$(basename "$dir")"
+        ((INSTALLED_COUNT++))
+
+        jar="$dir/$version.jar"
+        json="$dir/$version.json"
+
+        if [[ -f "$jar" ]]; then
+            pass "$version: JAR exists"
+        else
+            fail "$version: JAR missing"
+        fi
+
+        if [[ -f "$json" ]]; then
+            pass "$version: JSON exists"
+        else
+            fail "$version: JSON missing"
+        fi
+
+    done < <(
+        find "$MC_GAME_DIR/versions" \
+            -mindepth 1 \
+            -maxdepth 1 \
+            -type d \
+            -print0 2>/dev/null
     )
 
-    for dir in "${dirs[@]}"; do
-        if [[ -d "$dir" ]]; then
-            pass "$(basename "$dir")/"
-        else
-            warning "$(basename "$dir")/ does not exist."
-        fi
-    done
-}
+fi
 
+if (( INSTALLED_COUNT == 0 )); then
+    warn "No Minecraft versions installed"
+else
+    detail "Installed versions checked: $INSTALLED_COUNT"
+fi
 
-check_database() {
-    section "Version database"
+# ============================================================
+# 15. Search
+# ============================================================
 
-    if [[ ! -f "$VERSIONS_DB" ]]; then
-        fail "Version database missing."
-        echo "     Run: mc update database"
-        return
-    fi
+section "15. Search command"
 
-    pass "Version database exists."
+SEARCH="$COMMAND_DIR/search.sh"
 
-    if ! command -v jq >/dev/null 2>&1; then
-        fail "jq is required to read the version database."
-        return
-    fi
+if [[ -f "$SEARCH" ]]; then
 
-    if jq -e . "$VERSIONS_DB" >/dev/null 2>&1; then
-        pass "Version database contains valid JSON."
+    grep -q "search_versions" "$SEARCH" \
+        && pass "Minecraft version search implementation found" \
+        || fail "Minecraft version search implementation missing"
+
+    grep -q "search_modrinth" "$SEARCH" \
+        && pass "Modrinth search implementation found" \
+        || warn "Modrinth search implementation not detected"
+
+    grep -Eq 'versions\|version' "$SEARCH" \
+        && pass "version/version(s) handling found" \
+        || warn "version/version(s) handling not detected"
+
+else
+    fail "search.sh missing"
+fi
+
+# ============================================================
+# 16. Update
+# ============================================================
+
+section "16. Update command"
+
+UPDATE="$COMMAND_DIR/update.sh"
+
+if [[ -f "$UPDATE" ]]; then
+
+    if grep -Eq 'version_manifest_v2|piston-meta\.mojang\.com' "$UPDATE"; then
+        pass "Mojang version manifest detected"
     else
-        fail "Version database contains invalid JSON."
-        return
+        warn "Mojang manifest URL not detected"
     fi
 
-    local count
-    count="$(jq '.versions | length' "$VERSIONS_DB")"
-
-    if (( count > 0 )); then
-        pass "Database contains $count versions."
+    if grep -q "versions.json" "$UPDATE"; then
+        pass "versions.json update logic detected"
     else
-        fail "Database contains no versions."
+        warn "versions.json update logic not detected"
     fi
 
-    local latest
-    latest="$(jq -r '.latest.release // empty' "$VERSIONS_DB")"
-
-    if [[ -n "$latest" ]]; then
-        pass "Latest release: $latest"
+    if grep -Eq 'curl|wget' "$UPDATE"; then
+        pass "Network downloader detected"
     else
-        warning "Latest release is missing."
-    fi
-}
-
-
-check_tools() {
-    section "Required tools"
-
-    check_command "curl" "curl"
-
-    check_command "jq" "jq"
-
-    check_command "python3" "Python"
-
-    check_command "unzip" "unzip"
-
-    check_command "tar" "tar"
-
-    check_command "sha256sum" "sha256sum"
-}
-
-
-check_network() {
-    section "Network"
-
-    if ! command -v curl >/dev/null 2>&1; then
-        fail "Cannot test network because curl is missing."
-        return
+        fail "No curl/wget downloader detected"
     fi
 
-    if curl \
-        --silent \
-        --show-error \
-        --fail \
-        --max-time 10 \
-        https://piston-meta.mojang.com/mc/game/version_manifest_v2.json \
-        >/dev/null 2>&1; then
+else
+    fail "update.sh missing"
+fi
 
-        pass "Mojang version manifest is reachable."
+# ============================================================
+# 17. Non-interactive smoke tests
+# ============================================================
+
+section "17. Non-interactive smoke tests"
+
+echo
+detail "Interactive and destructive commands are deliberately NOT executed."
+echo
+
+run_test() {
+    local name="$1"
+    shift
+
+    if timeout 5s "$@" </dev/null >/dev/null 2>&1; then
+        pass "$name"
     else
-        fail "Could not reach Mojang services."
-    fi
-
-    if curl \
-        --silent \
-        --show-error \
-        --fail \
-        --max-time 10 \
-        https://api.modrinth.com/v2 \
-        >/dev/null 2>&1; then
-
-        pass "Modrinth API is reachable."
-    else
-        warning "Could not reach Modrinth API."
+        fail "$name failed"
     fi
 }
 
+run_test "mc help" "$MC_DIR/mc" help
+run_test "mc version" "$MC_DIR/mc" version
+run_test "mc list" "$MC_DIR/mc" list
+run_test "mc info" "$MC_DIR/mc" info
+run_test "mc search versions" "$MC_DIR/mc" search versions
+run_test "mc search versions --snapshot" "$MC_DIR/mc" search versions --snapshot
 
-check_config() {
-    section "Launcher configuration"
+# ============================================================
+# 18. Command inspection
+# ============================================================
 
-    if [[ -f "$CONFIG_FILE" ]]; then
-        pass "Configuration file exists."
+section "18. Interactive/destructive command inspection"
 
-        if grep -q '^game_dir=' "$CONFIG_FILE"; then
-            pass "Game directory setting exists."
-        else
-            warning "game_dir setting is missing."
-        fi
+INSPECT_ONLY=(
+    find
+    config
+    account
+    install
+    remove
+    run
+    import
+    export
+    update
+)
 
-        if grep -q '^max_memory=' "$CONFIG_FILE"; then
-            pass "Memory configuration exists."
-        else
-            warning "Memory configuration is missing."
-        fi
+for cmd in "${INSPECT_ONLY[@]}"; do
+
+    file="$COMMAND_DIR/$cmd.sh"
+
+    if [[ ! -f "$file" ]]; then
+        continue
+    fi
+
+    if bash -n "$file" 2>/dev/null; then
+        pass "$cmd.sh structurally valid"
     else
-        warning "Configuration file does not exist."
-        echo "     Run: mc config"
-    fi
-}
-
-
-check_accounts() {
-    section "Accounts"
-
-    if [[ ! -f "$ACCOUNTS_FILE" ]]; then
-        warning "No account database exists."
-        echo "     Run: mc account add"
-        return
+        fail "$cmd.sh structural check failed"
     fi
 
-    if ! command -v jq >/dev/null 2>&1; then
-        warning "Cannot inspect accounts without jq."
-        return
-    fi
+done
 
-    if ! jq -e . "$ACCOUNTS_FILE" >/dev/null 2>&1; then
-        fail "Account database contains invalid JSON."
-        return
-    fi
+echo
+detail "These commands were NOT executed:"
+detail "find, config, account, install, remove, run, import, export, update"
 
-    local count
-    count="$(jq '.accounts | length' "$ACCOUNTS_FILE")"
+# ============================================================
+# 19. Router error handling
+# ============================================================
 
-    if (( count > 0 )); then
-        pass "$count account(s) configured."
+section "19. Router error handling"
+
+if "$MC_DIR/mc" "__mc_doctor_invalid_command__" \
+    >/dev/null 2>&1; then
+
+    fail "Unknown command incorrectly returned success"
+
+else
+    pass "Unknown command returns non-zero status"
+fi
+
+# ============================================================
+# 20. Help
+# ============================================================
+
+section "20. Help"
+
+if timeout 5s "$MC_DIR/mc" help >/dev/null 2>&1; then
+    pass "Help command works"
+else
+    fail "Help command failed"
+fi
+
+# ============================================================
+# Final report
+# ============================================================
+
+echo
+printf "%b============================================================%b\n" "$CYAN" "$RESET"
+printf "%bDOCTOR REPORT%b\n" "$BOLD$CYAN" "$RESET"
+printf "%b============================================================%b\n" "$CYAN" "$RESET"
+
+echo
+printf "Checks:   %b%s%b\n" "$WHITE" "$CHECKS" "$RESET"
+printf "Passed:   %b%s%b\n" "$GREEN" "$PASSED" "$RESET"
+printf "Warnings: %b%s%b\n" "$YELLOW" "$WARNINGS" "$RESET"
+printf "Errors:   %b%s%b\n" "$RED" "$ERRORS" "$RESET"
+
+echo
+
+if (( ERRORS == 0 )); then
+
+    if (( WARNINGS == 0 )); then
+        printf "%b✓ MC Launcher is completely healthy.%b\n" \
+            "$GREEN$BOLD" "$RESET"
     else
-        warning "No Minecraft accounts configured."
-    fi
-}
-
-
-check_versions() {
-    section "Installed versions"
-
-    if [[ ! -d "$GAME_DIR/versions" ]]; then
-        warning "No versions directory."
-        return
+        printf "%b✓ No critical errors found.%b\n" \
+            "$YELLOW$BOLD" "$RESET"
+        printf "%b  %d warning(s) should be reviewed.%b\n" \
+            "$YELLOW" "$WARNINGS" "$RESET"
     fi
 
-    shopt -s nullglob
+else
 
-    local dirs=("$GAME_DIR/versions"/*)
-    local count=0
-    local incomplete=0
+    printf "%b✗ MC Launcher has %d critical problem(s).%b\n" \
+        "$RED$BOLD" "$ERRORS" "$RESET"
 
-    for dir in "${dirs[@]}"; do
-        [[ -d "$dir" ]] || continue
+fi
 
-        ((count++))
+echo
 
-        local name
-        name="$(basename "$dir")"
-
-        if [[ ! -f "$dir/$name.jar" ||
-              ! -f "$dir/$name.json" ]]; then
-            ((incomplete++))
-        fi
-    done
-
-    if (( count == 0 )); then
-        warning "No Minecraft versions installed."
-    else
-        pass "$count installed version(s)."
-    fi
-
-    if (( incomplete > 0 )); then
-        warning "$incomplete version(s) appear incomplete."
-    fi
-}
-
-
-print_summary() {
-    echo
-    echo -e "${BOLD}${CYAN}Doctor summary${RESET}"
-    echo "────────────────────────────────────────────────────────"
-
-    echo -e "  ${GREEN}Passed:${RESET}   $PASS"
-    echo -e "  ${YELLOW}Warnings:${RESET} $WARN"
-    echo -e "  ${RED}Failed:${RESET}   $FAIL"
-
-    echo
-
-    if (( FAIL > 0 )); then
-        echo -e "${RED}${BOLD}Your launcher has problems that should be fixed.${RESET}"
-        return 1
-    elif (( WARN > 0 )); then
-        echo -e "${YELLOW}${BOLD}Launcher is usable, but some things need attention.${RESET}"
-        return 0
-    else
-        echo -e "${GREEN}${BOLD}Everything looks healthy. ✓${RESET}"
-        return 0
-    fi
-}
-
-
-main() {
-    echo
-    echo -e "${BOLD}${CYAN}mc doctor${RESET}"
-    echo -e "${DIM}Minecraft launcher diagnostic${RESET}"
-
-    check_tools
-    check_java
-    check_game_directory
-    check_directories
-    check_database
-    check_config
-    check_accounts
-    check_versions
-    check_network
-
-    print_summary
-}
-
-
-main "$@"
+if (( ERRORS == 0 )); then
+    exit 0
+else
+    exit 1
+fi

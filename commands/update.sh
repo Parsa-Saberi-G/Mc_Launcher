@@ -1,8 +1,4 @@
 #!/bin/bash
-# MC Launcher shared UI
-MC_COMMAND_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$MC_COMMAND_DIR/ui.sh"
-
 
 set -o pipefail
 

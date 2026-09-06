@@ -1,8 +1,4 @@
 #!/bin/bash
-# MC Launcher shared UI
-MC_COMMAND_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$MC_COMMAND_DIR/ui.sh"
-
 
 set -o pipefail
 
@@ -39,16 +35,16 @@ fi
 # ============================================================
 
 die() {
-    mc_error $*" >&2
+    echo -e "${RED}Error:${RESET} $*" >&2
     exit 1
 }
 
 success() {
-    mc_ok $*" >&2
+    echo -e "${GREEN}✓${RESET} $*" >&2
 }
 
 warn() {
-    mc_warn $*" >&2
+    echo -e "${YELLOW}Warning:${RESET} $*" >&2
 }
 
 # ============================================================
