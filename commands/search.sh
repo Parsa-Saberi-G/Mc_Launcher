@@ -1,8 +1,5 @@
 #!/bin/bash
 
-# MC Launcher shared UI
-MC_COMMAND_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$MC_COMMAND_DIR/ui.sh"
 
 set -o pipefail
 
@@ -57,7 +54,7 @@ fi
 # ============================================================
 
 die() {
-    mc_error "$*" >&2
+    printf '%bError:%b %s\n' "$RED" "$RESET" "$*" >&2
     exit 1
 }
 
@@ -66,11 +63,11 @@ info() {
 }
 
 success() {
-    mc_ok "$*" >&2
+    printf '%b✓%b %s\n' "$GREEN" "$RESET" "$*" >&2
 }
 
 warn() {
-    mc_warn "$*" >&2
+    printf '%b!%b %s\n' "$YELLOW" "$RESET" "$*" >&2
 }
 
 require_command() {
@@ -1318,29 +1315,3 @@ main() {
 main "$@"
 
 # ============================================================
-# MC UI INSTALL HOOK
-# ============================================================
-
-mc_install_ui_start() {
-    mc_section "Installation"
-}
-
-mc_install_ui_search() {
-    mc_info "Searching Modrinth database..."
-}
-
-mc_install_ui_project() {
-    mc_info "Resolving project information..."
-}
-
-mc_install_ui_versions() {
-    mc_info "Finding compatible Minecraft versions..."
-}
-
-mc_install_ui_download() {
-    mc_info "Downloading project files..."
-}
-
-mc_install_ui_finish() {
-    mc_done "Installation complete"
-}
