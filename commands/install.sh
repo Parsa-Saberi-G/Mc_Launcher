@@ -1,6 +1,5 @@
 #!/bin/bash
 
-
 set -o pipefail
 
 # ============================================================
@@ -11,6 +10,11 @@ MC_VERSION="0.1.0"
 
 MODRINTH_API="https://api.modrinth.com/v2"
 FABRIC_META="https://meta.fabricmc.net/v2"
+
+MC_DATABASE="$(
+    cd "$(dirname "${BASH_SOURCE[0]}")/.." &&
+    pwd
+)/data/versions.json"
 
 GAME_DIR="${MC_GAME_DIR:-$HOME/.minecraft}"
 
@@ -79,6 +83,7 @@ check_dependencies() {
     require_command curl
     require_command jq
     require_command python3
+    require_command sha1sum
 }
 
 urlencode() {
@@ -121,6 +126,8 @@ download_file() {
     local url="$1"
     local output="$2"
 
+    mkdir -p "$(dirname "$output")"
+
     curl \
         --fail \
         --silent \
@@ -129,8 +136,17 @@ download_file() {
         --connect-timeout 10 \
         --max-time 300 \
         -H "User-Agent: mc-launcher/${MC_VERSION}" \
-        -o "$output" \
+        -o "$output.tmp" \
         "$url"
+
+    local status=$?
+
+    if (( status != 0 )); then
+        rm -f "$output.tmp"
+        return "$status"
+    fi
+
+    mv -f "$output.tmp" "$output"
 }
 
 # ============================================================
@@ -141,7 +157,6 @@ download_file() {
 #
 # Browse mode:
 #   /search?query=&index=downloads
-#
 # ============================================================
 
 search_modrinth() {
@@ -150,19 +165,23 @@ search_modrinth() {
     local limit="${3:-100}"
 
     local facets
+
     facets="$(
         jq -cn --arg type "$project_type" \
             '[[("project_type:" + $type)]]'
     )"
 
     local encoded_facets
+
     encoded_facets="$(urlencode "$facets")"
 
     local url
+
     url="${MODRINTH_API}/search"
 
     if [[ -n "$query" ]]; then
         local encoded_query
+
         encoded_query="$(urlencode "$query")"
 
         url+="?query=${encoded_query}"
@@ -266,6 +285,7 @@ if len(words) > 1:
 
 for value in variants[:20]:
     print(value)
+
 PY
 }
 
@@ -278,6 +298,7 @@ collect_candidates() {
     local project_type="$2"
 
     local temp_dir
+
     temp_dir="$(mktemp -d)" || return 1
 
     local merged="$temp_dir/merged.json"
@@ -289,6 +310,7 @@ collect_candidates() {
     # ========================================================
 
     if [[ -z "$(normalize_text "$query")" ]]; then
+
         local result
 
         result="$(
@@ -301,12 +323,13 @@ collect_candidates() {
 
         if [[ -n "$result" ]] &&
            jq -e '.hits' >/dev/null 2>&1 <<<"$result"; then
-
             printf '%s\n' "$result" > "$merged"
         fi
 
         cat "$merged"
+
         rm -rf "$temp_dir"
+
         return 0
     fi
 
@@ -319,6 +342,7 @@ collect_candidates() {
     local index=0
 
     while IFS= read -r variant; do
+
         [[ -z "$variant" ]] && continue
 
         index=$((index + 1))
@@ -364,7 +388,9 @@ collect_candidates() {
 
         # Original query worked.
         # Don't waste time doing many more requests.
+
         if (( first == 1 )); then
+
             local hit_count
 
             hit_count="$(jq '.hits | length' "$merged")"
@@ -377,7 +403,9 @@ collect_candidates() {
         fi
 
         # For fuzzy searches, stop once we have enough results.
+
         if (( index > 1 )); then
+
             local hit_count
 
             hit_count="$(jq '.hits | length' "$merged")"
@@ -406,7 +434,6 @@ collect_candidates() {
 # This fixes:
 #   Argument list too long
 #   JSONDecodeError / empty stdin
-#
 # ============================================================
 
 rank_candidates() {
@@ -486,6 +513,7 @@ def score(project):
     qwords = q.split()
 
     for word in qwords:
+
         if word in t:
             score += 180
 
@@ -522,7 +550,9 @@ def score(project):
 
 
 # Only score when we actually have a query.
+
 if query.strip():
+
     for project in hits:
         project["_mc_score"] = score(project)
 
@@ -541,6 +571,7 @@ print(
         ensure_ascii=False
     )
 )
+
 PYRANK
 
     local status=$?
@@ -559,7 +590,6 @@ PYRANK
 #
 #   1) Sodium
 #   0) Cancel
-#
 # ============================================================
 
 select_modrinth_project() {
@@ -588,6 +618,7 @@ select_modrinth_project() {
     count="$(jq '.hits | length' <<<"$candidates")"
 
     if (( count == 0 )); then
+
         if [[ -n "$query" ]]; then
             die "No results found for '$query'."
         fi
@@ -645,7 +676,6 @@ select_modrinth_project() {
     #   1 -> hits[0]
     #   2 -> hits[1]
     #   ...
-    #
     # ========================================================
 
     local display_count="$count"
@@ -666,7 +696,9 @@ select_modrinth_project() {
     fi
 
     echo >&2
+
     echo -e "${BOLD}Possible matches:${RESET}" >&2
+
     echo >&2
 
     jq -r --argjson limit "$display_count" '
@@ -684,10 +716,18 @@ select_modrinth_project() {
     ' <<<"$ranked" |
     while IFS=$'\t' read -r number title description downloads slug; do
 
-        printf "  %b%s)%b %b%s%b\n" "$CYAN" "$number" "$RESET" "$BOLD" "$title" "$RESET" >&2
+        printf "  %b%s)%b %b%s%b\n" \
+            "$CYAN" \
+            "$number" \
+            "$RESET" \
+            "$BOLD" \
+            "$title" \
+            "$RESET" \
+            >&2
 
         if [[ -n "$description" ]]; then
-            description="${description//$'\\n'/ }"
+
+            description="${description//$'\n'/ }"
 
             echo -e \
                 "     ${DIM}${description:0:110}${RESET}" \
@@ -733,12 +773,13 @@ select_modrinth_project() {
            (( selection >= 1 && selection <= display_count )); then
 
             # IMPORTANT:
+            #
             # Do NOT reverse this.
             #
             # 1 = best ranked result
             # 2 = second best
             # etc.
-            #
+
             jq -c \
                 --argjson n "$selection" \
                 '.hits[$n - 1]' \
@@ -843,7 +884,9 @@ select_project_version() {
         display_count=10
 
     echo >&2
+
     echo -e "${BOLD}Compatible versions:${RESET}" >&2
+
     echo >&2
 
     # Reverse the visual display so:
@@ -854,6 +897,7 @@ select_project_version() {
     #    1) newest
     #
     # Selection still maps 1 -> filtered[0].
+
     jq -r --argjson limit "$display_count" '
         .[:$limit]
         | reverse
@@ -976,7 +1020,9 @@ download_project_file() {
 
     info "Downloading ${BOLD}${file_name}${RESET}..."
 
-    download_file "$file_url" "$output" ||
+    download_file \
+        "$file_url" \
+        "$output" ||
         die "Failed to download '$file_name'."
 
     success "Installed $file_name"
@@ -992,6 +1038,7 @@ install_modrinth_content() {
     local destination="$3"
 
     echo >&2
+
     echo -e "${CYAN}Searching Modrinth...${RESET}" >&2
 
     local project
@@ -1012,7 +1059,9 @@ install_modrinth_content() {
     slug="$(jq -r '.slug // .project_id // "unknown"' <<<"$project")"
 
     echo >&2
+
     echo -e "${BOLD}Selected:${RESET} $title" >&2
+
     echo -e "Slug: $slug" >&2
 
     local version
@@ -1027,6 +1076,649 @@ install_modrinth_content() {
 }
 
 # ============================================================
+# Minecraft Database
+# ============================================================
+
+check_minecraft_database() {
+    [[ -f "$MC_DATABASE" ]] ||
+        die "Minecraft database not found.
+
+Run:
+  mc update database"
+    
+    jq -e . "$MC_DATABASE" >/dev/null 2>&1 ||
+        die "Minecraft database contains invalid JSON:
+
+  $MC_DATABASE
+
+Run:
+  mc update database"
+}
+
+# ============================================================
+# Get Minecraft Version URL
+#
+# Supports the lightweight database:
+#
+# {
+#   "versions": [
+#     {
+#       "id": "26.2",
+#       "url": "https://..."
+#     }
+#   ]
+# }
+#
+# Also supports a database containing:
+#
+# {
+#   "versions": [
+#     {
+#       "id": "26.2",
+#       "metadata": {...}
+#     }
+#   ]
+# }
+# ============================================================
+
+get_minecraft_version_url() {
+    local version="$1"
+
+    jq -r \
+        --arg version "$version" '
+        .versions[]
+        | select(.id == $version)
+        | .url // empty
+        ' \
+        "$MC_DATABASE" |
+        head -n 1
+}
+
+# ============================================================
+# Get Minecraft Metadata
+#
+# If update.sh already stored metadata, use it.
+#
+# Otherwise use the lightweight version URL and download the
+# detailed Mojang metadata lazily.
+# ============================================================
+
+get_minecraft_metadata() {
+    local version="$1"
+
+    check_minecraft_database
+
+    local stored_metadata
+
+    stored_metadata="$(
+        jq -c \
+            --arg version "$version" '
+            .versions[]
+            | select(.id == $version)
+            | .metadata
+            | select(. != null)
+            ' \
+            "$MC_DATABASE" |
+        head -n 1
+    )"
+
+    if [[ -n "$stored_metadata" ]]; then
+
+        if jq -e . >/dev/null 2>&1 <<<"$stored_metadata"; then
+            printf '%s\n' "$stored_metadata"
+            return 0
+        fi
+    fi
+
+    local version_url
+
+    version_url="$(get_minecraft_version_url "$version")"
+
+    [[ -n "$version_url" ]] ||
+        return 1
+
+    info "Downloading Minecraft ${version} metadata..."
+
+    local metadata
+
+    metadata="$(
+        curl \
+            --fail \
+            --silent \
+            --show-error \
+            --location \
+            --connect-timeout 10 \
+            --max-time 30 \
+            -H "User-Agent: mc-launcher/${MC_VERSION}" \
+            -H "Accept: application/json" \
+            "$version_url"
+    )" || return 1
+
+    if ! jq -e . >/dev/null 2>&1 <<<"$metadata"; then
+        return 1
+    fi
+
+    printf '%s\n' "$metadata"
+}
+
+# ============================================================
+# SHA-1 Verification
+# ============================================================
+
+verify_sha1() {
+    local file="$1"
+    local expected="$2"
+
+    [[ -z "$expected" ]] &&
+        return 0
+
+    [[ -f "$file" ]] ||
+        return 1
+
+    local actual
+
+    actual="$(
+        sha1sum "$file" |
+        awk '{print $1}'
+    )"
+
+    [[ "$actual" == "$expected" ]]
+}
+
+# ============================================================
+# Minecraft Library Rules
+#
+# Determines whether a library is allowed on Linux.
+# ============================================================
+
+minecraft_library_allowed() {
+    local library="$1"
+
+    local rules
+
+    rules="$(jq -c '.rules // null' <<<"$library")"
+
+    if [[ "$rules" == "null" ]]; then
+        return 0
+    fi
+
+    local os_name="linux"
+    local os_arch
+
+    case "$(uname -m)" in
+        x86_64|amd64)
+            os_arch="x86_64"
+            ;;
+        i686|i386)
+            os_arch="x86"
+            ;;
+        aarch64|arm64)
+            os_arch="aarch64"
+            ;;
+        armv7l|armv7)
+            os_arch="arm"
+            ;;
+        *)
+            os_arch="$(uname -m)"
+            ;;
+    esac
+
+    local matching_rules
+
+    matching_rules="$(
+        jq -c \
+            --arg os "$os_name" \
+            --arg arch "$os_arch" '
+            [
+                .[]
+                | select(
+                    (.os == null)
+                    or (
+                        (.os.name == null or .os.name == $os)
+                        and
+                        (.os.arch == null or .os.arch == $arch)
+                    )
+                )
+            ]
+            ' <<<"$rules"
+    )"
+
+    local matching_count
+
+    matching_count="$(jq 'length' <<<"$matching_rules")"
+
+    if (( matching_count == 0 )); then
+        return 0
+    fi
+
+    local action
+
+    action="$(
+        jq -r '.[-1].action // "allow"' <<<"$matching_rules"
+    )"
+
+    [[ "$action" == "allow" ]]
+}
+
+# ============================================================
+# Install Minecraft Libraries
+# ============================================================
+
+install_minecraft_libraries() {
+    local metadata="$1"
+    local version="$2"
+
+    local libraries
+
+    libraries="$(
+        jq -c '.libraries // []' <<<"$metadata"
+    )"
+
+    local total
+
+    total="$(jq 'length' <<<"$libraries")"
+
+    if (( total == 0 )); then
+        warn "No libraries listed for Minecraft $version."
+        return 0
+    fi
+
+    echo >&2
+
+    info "Downloading Minecraft libraries..."
+
+    local downloaded=0
+    local existing=0
+    local failed=0
+    local skipped=0
+
+    while IFS= read -r library; do
+
+        local name
+
+        name="$(jq -r '.name // "unknown"' <<<"$library")"
+
+        if ! minecraft_library_allowed "$library"; then
+            skipped=$((skipped + 1))
+            continue
+        fi
+
+        # ====================================================
+        # Normal artifact
+        # ====================================================
+
+        local artifact_url
+        local artifact_path
+        local artifact_sha1
+
+        artifact_url="$(
+            jq -r \
+                '.downloads.artifact.url // empty' \
+                <<<"$library"
+        )"
+
+        artifact_path="$(
+            jq -r \
+                '.downloads.artifact.path // empty' \
+                <<<"$library"
+        )"
+
+        artifact_sha1="$(
+            jq -r \
+                '.downloads.artifact.sha1 // empty' \
+                <<<"$library"
+        )"
+
+        if [[ -n "$artifact_url" && -n "$artifact_path" ]]; then
+
+            local output
+
+            output="$GAME_DIR/libraries/$artifact_path"
+
+            mkdir -p "$(dirname "$output")"
+
+            if [[ -f "$output" && -s "$output" ]]; then
+
+                if [[ -n "$artifact_sha1" ]] &&
+                   ! verify_sha1 "$output" "$artifact_sha1"; then
+
+                    warn "Invalid library checksum, redownloading:"
+                    warn "  $name"
+
+                    rm -f "$output"
+
+                else
+                    existing=$((existing + 1))
+                fi
+            fi
+
+            if [[ ! -f "$output" ]]; then
+
+                if download_file "$artifact_url" "$output"; then
+
+                    if [[ -n "$artifact_sha1" ]] &&
+                       ! verify_sha1 "$output" "$artifact_sha1"; then
+
+                        rm -f "$output"
+
+                        warn "SHA1 mismatch:"
+                        warn "  $name"
+
+                        failed=$((failed + 1))
+
+                    else
+                        downloaded=$((downloaded + 1))
+                    fi
+
+                else
+
+                    warn "Failed to download library:"
+                    warn "  $name"
+
+                    failed=$((failed + 1))
+                fi
+            fi
+        fi
+
+        # ====================================================
+        # Linux native
+        # ====================================================
+
+        local native_key=""
+
+        while IFS= read -r classifier; do
+
+            [[ -z "$classifier" ]] &&
+                continue
+
+            case "$classifier" in
+                natives-linux)
+                    native_key="$classifier"
+                    break
+                    ;;
+            esac
+
+        done < <(
+            jq -r '
+                .downloads.classifiers // {}
+                | keys[]
+            ' <<<"$library"
+        )
+
+        if [[ -n "$native_key" ]]; then
+
+            local native_url
+            local native_path
+            local native_sha1
+
+            native_url="$(
+                jq -r \
+                    --arg key "$native_key" \
+                    '.downloads.classifiers[$key].url // empty' \
+                    <<<"$library"
+            )"
+
+            native_path="$(
+                jq -r \
+                    --arg key "$native_key" \
+                    '.downloads.classifiers[$key].path // empty' \
+                    <<<"$library"
+            )"
+
+            native_sha1="$(
+                jq -r \
+                    --arg key "$native_key" \
+                    '.downloads.classifiers[$key].sha1 // empty' \
+                    <<<"$library"
+            )"
+
+            if [[ -n "$native_url" && -n "$native_path" ]]; then
+
+                local native_output
+
+                native_output="$GAME_DIR/libraries/$native_path"
+
+                mkdir -p "$(dirname "$native_output")"
+
+                if [[ -f "$native_output" && -s "$native_output" ]]; then
+
+                    if [[ -n "$native_sha1" ]] &&
+                       ! verify_sha1 "$native_output" "$native_sha1"; then
+
+                        warn "Invalid native checksum, redownloading:"
+                        warn "  $name"
+
+                        rm -f "$native_output"
+
+                    else
+                        existing=$((existing + 1))
+                    fi
+                fi
+
+                if [[ ! -f "$native_output" ]]; then
+
+                    if download_file "$native_url" "$native_output"; then
+
+                        if [[ -n "$native_sha1" ]] &&
+                           ! verify_sha1 "$native_output" "$native_sha1"; then
+
+                            rm -f "$native_output"
+
+                            warn "Native SHA1 mismatch:"
+                            warn "  $name"
+
+                            failed=$((failed + 1))
+
+                        else
+                            downloaded=$((downloaded + 1))
+                        fi
+
+                    else
+
+                        warn "Failed to download native:"
+                        warn "  $name"
+
+                        failed=$((failed + 1))
+                    fi
+                fi
+            fi
+        fi
+
+    done < <(
+        jq -c '.[]' <<<"$libraries"
+    )
+
+    printf \
+        '  Libraries: %d downloaded, %d already present' \
+        "$downloaded" \
+        "$existing" \
+        >&2
+
+    if (( skipped > 0 )); then
+        printf ', %d skipped' "$skipped" >&2
+    fi
+
+    if (( failed > 0 )); then
+        printf ', %d failed' "$failed" >&2
+    fi
+
+    printf '\n' >&2
+
+    (( failed == 0 ))
+}
+
+# ============================================================
+# Install Minecraft Assets
+# ============================================================
+
+install_minecraft_assets() {
+    local metadata="$1"
+    local version="$2"
+
+    local asset_index_id
+    local asset_index_url
+    local asset_index_sha1
+
+    asset_index_id="$(
+        jq -r \
+            '.assetIndex.id // empty' \
+            <<<"$metadata"
+    )"
+
+    asset_index_url="$(
+        jq -r \
+            '.assetIndex.url // empty' \
+            <<<"$metadata"
+    )"
+
+    asset_index_sha1="$(
+        jq -r \
+            '.assetIndex.sha1 // empty' \
+            <<<"$metadata"
+    )"
+
+    if [[ -z "$asset_index_id" || -z "$asset_index_url" ]]; then
+        warn "No asset index found for Minecraft $version."
+        return 0
+    fi
+
+    local indexes_dir="$GAME_DIR/assets/indexes"
+    local objects_dir="$GAME_DIR/assets/objects"
+
+    mkdir -p \
+        "$indexes_dir" \
+        "$objects_dir"
+
+    local index_file="$indexes_dir/${asset_index_id}.json"
+
+    echo >&2
+
+    info "Preparing Minecraft asset index..."
+
+    if [[ -f "$index_file" && -s "$index_file" ]]; then
+
+        if [[ -n "$asset_index_sha1" ]] &&
+           ! verify_sha1 "$index_file" "$asset_index_sha1"; then
+
+            warn "Asset index checksum invalid."
+            warn "Redownloading..."
+
+            rm -f "$index_file"
+
+        else
+            success "Asset index already present"
+        fi
+    fi
+
+    if [[ ! -f "$index_file" ]]; then
+
+        info "Downloading asset index..."
+
+        download_file \
+            "$asset_index_url" \
+            "$index_file" ||
+            die "Failed to download asset index."
+
+        if [[ -n "$asset_index_sha1" ]] &&
+           ! verify_sha1 "$index_file" "$asset_index_sha1"; then
+
+            rm -f "$index_file"
+
+            die "Asset index SHA1 verification failed."
+        fi
+
+        success "Asset index downloaded"
+    fi
+
+    local asset_count
+
+    asset_count="$(
+        jq '.objects // {} | length' "$index_file"
+    )"
+
+    info "Downloading Minecraft assets ($asset_count)..."
+
+    local downloaded=0
+    local existing=0
+    local failed=0
+
+    while IFS=$'\t' read -r asset_name asset_hash; do
+
+        [[ -z "$asset_hash" ]] &&
+            continue
+
+        local prefix="${asset_hash:0:2}"
+
+        local output="$objects_dir/$prefix/$asset_hash"
+
+        mkdir -p "$(dirname "$output")"
+
+        if [[ -f "$output" && -s "$output" ]]; then
+
+            if verify_sha1 "$output" "$asset_hash"; then
+                existing=$((existing + 1))
+                continue
+            fi
+
+            rm -f "$output"
+        fi
+
+        local asset_url
+
+        asset_url="https://resources.download.minecraft.net/${prefix}/${asset_hash}"
+
+        if download_file "$asset_url" "$output"; then
+
+            if verify_sha1 "$output" "$asset_hash"; then
+
+                downloaded=$((downloaded + 1))
+
+            else
+
+                rm -f "$output"
+
+                warn "Asset checksum mismatch:"
+                warn "  $asset_name"
+
+                failed=$((failed + 1))
+            fi
+
+        else
+
+            warn "Failed to download asset:"
+            warn "  $asset_name"
+
+            failed=$((failed + 1))
+        fi
+
+    done < <(
+        jq -r '
+            .objects // {}
+            | to_entries[]
+            | [
+                .key,
+                .value.hash
+            ]
+            | @tsv
+        ' "$index_file"
+    )
+
+    printf \
+        '  Assets: %d downloaded, %d already present' \
+        "$downloaded" \
+        "$existing" \
+        >&2
+
+    if (( failed > 0 )); then
+        printf ', %d failed' "$failed" >&2
+    fi
+
+    printf '\n' >&2
+
+    (( failed == 0 ))
+}
+
+# ============================================================
 # Vanilla Minecraft
 # ============================================================
 
@@ -1036,39 +1728,35 @@ install_vanilla_version() {
     [[ -n "$version" ]] ||
         die "Minecraft version is required."
 
-    local manifest_url
-
-    manifest_url="https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
+    check_minecraft_database
 
     info "Checking Minecraft version ${BOLD}${version}${RESET}..."
 
-    local manifest
+    # ========================================================
+    # Get detailed metadata.
+    #
+    # This first checks whether update.sh already embedded it.
+    # If not, only THIS requested version is downloaded.
+    # ========================================================
 
-    manifest="$(
-        curl \
-            --fail \
-            --silent \
-            --show-error \
-            --location \
-            --connect-timeout 10 \
-            --max-time 30 \
-            "$manifest_url"
-    )" || die "Failed to retrieve Minecraft version manifest."
+    local metadata
 
-    local version_url
+    metadata="$(
+        get_minecraft_metadata "$version"
+    )" || {
+        die "Minecraft version '$version' was not found in the database."
+    }
 
-    version_url="$(
-        jq -r \
-            --arg version "$version" '
-            .versions[]
-            | select(.id == $version)
-            | .url
-        ' <<<"$manifest" |
-        head -n 1
-    )"
+    [[ -n "$metadata" ]] ||
+        die "Minecraft metadata for '$version' is empty."
 
-    [[ -n "$version_url" ]] ||
-        die "Minecraft version '$version' does not exist."
+    if ! jq -e . >/dev/null 2>&1 <<<"$metadata"; then
+        die "Minecraft metadata for '$version' is invalid."
+    fi
+
+    # ========================================================
+    # Version directory
+    # ========================================================
 
     local version_dir
 
@@ -1077,28 +1765,61 @@ install_vanilla_version() {
     mkdir -p "$version_dir"
 
     local json_file
-
-    json_file="$version_dir/$version.json"
-
     local jar_file
 
+    json_file="$version_dir/$version.json"
     jar_file="$version_dir/$version.jar"
 
-    info "Downloading version metadata..."
+    # ========================================================
+    # Save metadata
+    # ========================================================
 
-    download_file \
-        "$version_url" \
-        "$json_file" ||
-        die "Failed to download Minecraft metadata."
+    printf '%s\n' "$metadata" |
+        jq '.' > "$json_file" ||
+        die "Failed to save Minecraft metadata."
+
+    success "Version metadata ready"
+
+    # ========================================================
+    # Client
+    # ========================================================
 
     local client_url
+    local client_sha1
 
     client_url="$(
-        jq -r '.downloads.client.url // empty' "$json_file"
+        jq -r \
+            '.downloads.client.url // empty' \
+            <<<"$metadata"
+    )"
+
+    client_sha1="$(
+        jq -r \
+            '.downloads.client.sha1 // empty' \
+            <<<"$metadata"
     )"
 
     [[ -n "$client_url" ]] ||
-        die "Minecraft version has no client download."
+        die "Minecraft $version has no client download URL."
+
+    echo >&2
+
+    info "Preparing Minecraft client..."
+
+    if [[ -f "$jar_file" && -s "$jar_file" ]]; then
+
+        if [[ -n "$client_sha1" ]] &&
+           ! verify_sha1 "$jar_file" "$client_sha1"; then
+
+            warn "Existing Minecraft client has an invalid checksum."
+            warn "Redownloading..."
+
+            rm -f "$jar_file"
+
+        else
+            success "Minecraft client already present"
+        fi
+    fi
 
     if [[ ! -f "$jar_file" ]]; then
 
@@ -1109,9 +1830,85 @@ install_vanilla_version() {
             "$jar_file" ||
             die "Failed to download Minecraft client."
 
+        if [[ -n "$client_sha1" ]] &&
+           ! verify_sha1 "$jar_file" "$client_sha1"; then
+
+            rm -f "$jar_file"
+
+            die "Minecraft client SHA1 verification failed."
+        fi
+
+        success "Minecraft client downloaded"
     fi
 
-    success "Minecraft $version installed."
+    # ========================================================
+    # Libraries
+    # ========================================================
+
+    install_minecraft_libraries \
+        "$metadata" \
+        "$version" ||
+        die "One or more Minecraft libraries failed to download."
+
+    # ========================================================
+    # Assets
+    # ========================================================
+
+    install_minecraft_assets \
+        "$metadata" \
+        "$version" ||
+        die "One or more Minecraft assets failed to download."
+
+    # ========================================================
+    # Natives directory
+    #
+    # run.sh can extract native libraries here later.
+    # ========================================================
+
+    mkdir -p "$GAME_DIR/natives/$version"
+
+    # ========================================================
+    # Summary
+    # ========================================================
+
+    local client_size
+
+    client_size="$(
+        du -h "$jar_file" |
+        awk '{print $1}'
+    )"
+
+    echo >&2
+
+    success "Minecraft $version installed successfully."
+
+    echo >&2
+
+    printf '  Version:     %s\n' \
+        "$version" \
+        >&2
+
+    printf '  Client:      %s\n' \
+        "$jar_file" \
+        >&2
+
+    printf '  Client size: %s\n' \
+        "$client_size" \
+        >&2
+
+    printf '  Libraries:   %s\n' \
+        "$GAME_DIR/libraries" \
+        >&2
+
+    printf '  Assets:      %s\n' \
+        "$GAME_DIR/assets" \
+        >&2
+
+    printf '  Natives:     %s\n' \
+        "$GAME_DIR/natives/$version" \
+        >&2
+
+    echo >&2
 }
 
 # ============================================================
@@ -1148,9 +1945,10 @@ install_fabric() {
     else
 
         loader_version="$(
-            jq -r '.[0].loader.version // empty' <<<"$loaders"
+            jq -r \
+                '.[0].loader.version // empty' \
+                <<<"$loaders"
         )"
-
     fi
 
     [[ -n "$loader_version" ]] ||
@@ -1206,7 +2004,6 @@ install_fabric() {
 # ============================================================
 
 parse_arguments() {
-
     while [[ $# -gt 0 ]]; do
 
         local arg="$1"
@@ -1262,7 +2059,7 @@ parse_arguments() {
 
             --help|-h)
 
-                cat >&2 <<EOF
+                cat >&2 <<'EOF'
 Usage:
 
   mc install <type> [name] [options]
@@ -1306,6 +2103,9 @@ Notes:
 
   Interactive selection is always shown unless --yes is used.
 
+  Minecraft version metadata is downloaded lazily from the
+  local Minecraft database when installing a version.
+
 EOF
 
                 exit 0
@@ -1328,7 +2128,6 @@ EOF
                 ;;
 
         esac
-
     done
 }
 
@@ -1366,6 +2165,7 @@ main() {
                 die "Minecraft version is required."
 
             install_vanilla_version "$version"
+
             ;;
 
         # ====================================================
@@ -1382,26 +2182,31 @@ main() {
                 fabric)
 
                     install_fabric
+
                     ;;
 
                 quilt)
 
                     die "Quilt installation is not implemented yet."
+
                     ;;
 
                 forge)
 
                     die "Forge installation is not implemented yet."
+
                     ;;
 
                 neoforge)
 
                     die "NeoForge installation is not implemented yet."
+
                     ;;
 
                 *)
 
                     die "Unknown loader '$QUERY'."
+
                     ;;
 
             esac
@@ -1418,6 +2223,7 @@ main() {
                 "mod" \
                 "$QUERY" \
                 "$GAME_DIR/mods"
+
             ;;
 
         # ====================================================
@@ -1430,6 +2236,7 @@ main() {
                 "shader" \
                 "$QUERY" \
                 "$GAME_DIR/shaderpacks"
+
             ;;
 
         # ====================================================
@@ -1442,6 +2249,7 @@ main() {
                 "resourcepack" \
                 "$QUERY" \
                 "$GAME_DIR/resourcepacks"
+
             ;;
 
         # ====================================================
@@ -1454,6 +2262,7 @@ main() {
                 "modpack" \
                 "$QUERY" \
                 "$GAME_DIR/modpacks"
+
             ;;
 
         *)
@@ -1466,4 +2275,3 @@ main() {
 }
 
 main "$@"
-# ============================================================
