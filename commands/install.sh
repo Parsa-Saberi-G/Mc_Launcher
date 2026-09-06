@@ -687,12 +687,10 @@ select_modrinth_project() {
     ' <<<"$ranked" |
     while IFS=$'\t' read -r number title description downloads slug; do
 
-        echo -e \
-            "  ${CYAN}${number})${RESET} ${BOLD}${title}${RESET}" \
-            >&2
+        printf "  %b%s)%b %b%s%b\\n" "$CYAN" "$number" "$RESET" "$BOLD" "$title" "$RESET" >&2
 
         if [[ -n "$description" ]]; then
-            description="${description//$'\n'/ }"
+            description="${description//$'\\n'/ }"
 
             echo -e \
                 "     ${DIM}${description:0:110}${RESET}" \
